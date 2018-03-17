@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
 
 #define MAXBUF		1024
 #define OPEN_MAX	100
@@ -29,6 +30,24 @@ void bad_request(int);
 void setNonBlock(int);
 void headers(int, const char *);
 int startup(short port);
+void sig_child(int signo);
+
+/*
+ do child exit 
+*/
+void sig_child(int signo) 
+{
+    pid_t pid;
+    int stat;
+    while ((pid = waitpid(-1, &stat, WNOHANG)) > 0) {
+		if (WIFEXITED(stat)) {
+	        printf("Child exited with code %d\n", WEXITSTATUS(stat));
+	    } else if (WIFSIGNALED(stat)) {
+	        printf("Child terminated abnormally, signal %d\n", WTERMSIG(stat));
+	    }
+     }
+    return;
+}
 /* 
  set nonblock
 */
@@ -70,12 +89,13 @@ int startup(short port) {
 int main(int argc, char  *argv[])
 {
 	int listenfd;
-	int port, connfd;
+	int port, connfd, stat_val;
 	char buf[MAXBUF];
 	char sendBuff[MAXBUF];
 	struct sockaddr_in client_addr;
 	socklen_t clilen;
 	time_t ticks;
+	pid_t pid;
 	if (argc != 2){
 		handle_error("use comand  port");
 	}
@@ -83,30 +103,32 @@ int main(int argc, char  *argv[])
 	listenfd = startup(port);	 
  	sprintf(buf, "httpd running on port %d\n", port);
  	puts(buf);
+ 	signal(SIGCHLD, sig_child);
  	while (1) {
 		memset(sendBuff, '\0', sizeof(sendBuff));	
 		memset(buf, '\0', sizeof(buf));
 	 	connfd = accept(listenfd, (struct sockaddr *)&client_addr , &clilen); 
 	 	if (connfd == -1)
 	 		handle_error("accept");
-	 	char *str = inet_ntoa(client_addr.sin_addr);
-		printf("connect from %s\n", str);
-		printf("accept  fd is %d\n", connfd);
-	 	if(read(connfd, buf, sizeof(buf)) < 0)
- 			close(connfd);
- 		ticks = time(NULL);
- 		//send client time
- 		//snprintf(sendBuff, sizeof(sendBuff), "%.24s\r\n", ctime(&ticks));
- 		//write(connfd, sendBuff, strlen(sendBuff));
-		strcpy(sendBuff, "HTTP/1.0 200 OK\r\n");
-		send(connfd, sendBuff, strlen(sendBuff), 0);
- 		sprintf(sendBuff, "Content-Type: text/html\r\n\r\n");
-		send(connfd, sendBuff, strlen(sendBuff), 0);
-		strcpy(sendBuff, "hi tinyhttpd\r\n");
-		send(connfd, sendBuff, strlen(sendBuff), 0);
-		//send(connfd, buf, strlen(buf), 0);
-
+	 	if ((pid = fork()) == 0 ) {
+	 		//close(listenfd);
+		 	char *str = inet_ntoa(client_addr.sin_addr);
+			printf("connect from %s\n", str);
+			printf("accept  fd is %d\n", connfd);
+		 	// if(read(connfd, buf, sizeof(buf)) < 0) {
+	 		//  	close(connfd);
+	 		// 	exit(0);
+		 	// }
+			strcpy(sendBuff, "HTTP/1.0 200 OK\r\n");
+			send(connfd, sendBuff, strlen(sendBuff), 0);
+	 		sprintf(sendBuff, "Content-Type: text/html\r\n\r\n");
+			send(connfd, sendBuff, strlen(sendBuff), 0);
+			strcpy(sendBuff, "hi tinyhttpd\r\n");
+			send(connfd, sendBuff, strlen(sendBuff), 0);
+			close(connfd);
+	 		exit(0);
+ 		}
  		close(connfd);
- 	}
+  	}
 	return 0;
 }
